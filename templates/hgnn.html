@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}HGNN Node Classification — HyperBench{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1><i class="fas fa-brain me-2"></i><span data-i18n="nav_hgnn">Node Classification (HGNN)</span></h1>
+    <p class="lead" data-i18n="hgnn_page_desc">Train Hypergraph Neural Network for node classification</p>
+</div>
+
+<div class="row g-4">
+    <!-- Config Panel -->
+    <div class="col-lg-4">
+        <div class="card glass-card sticky-top" style="top:80px">
+            <div class="card-body">
+                <h5><i class="fas fa-cog me-2"></i><span data-i18n="configuration">Configuration</span></h5>
+
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="select_dataset">Select Dataset</label>
+                    <select class="form-select dark-input" id="hgnnDataset" onchange="loadHGNNFiles()">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+
+                <!-- Attribute file -->
+                <div class="mb-3">
+                    <label class="form-label">Attribute File (.json)</label>
+                    <select class="form-select dark-input" id="hgnnAttrFile">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+
+                <!-- Hyperedge files -->
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="select_files">Hyperedge Files (.txt)</label>
+                    <div id="hgnnFiles" class="file-checklist"></div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="or_upload">Or Upload</label>
+                    <div class="drop-zone drop-zone-sm" id="hgnnDropZone">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <small data-i18n="drop_folder_files">Drop folder or .txt / .json files</small>
+                        <input type="file" id="hgnnFileInput" multiple accept=".txt,.json" style="display:none">
+                    </div>
+                </div>
+
+                <hr class="border-secondary">
+
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">Epochs</label>
+                        <input type="number" class="form-control dark-input" id="hgnnEpochs" value="200" min="50" max="1000">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Hidden Dim</label>
+                        <input type="number" class="form-control dark-input" id="hgnnHidden" value="128" min="16" max="512">
+                    </div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-4">
+                        <label class="form-label small">Runs</label>
+                        <input type="number" class="form-control dark-input" id="hgnnRuns" value="3" min="1" max="20">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small">Train</label>
+                        <input type="number" class="form-control dark-input" id="hgnnTrain" value="300" min="10">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small">Test</label>
+                        <input type="number" class="form-control dark-input" id="hgnnTest" value="100" min="10">
+                    </div>
+                </div>
+
+                <button class="btn btn-primary w-100 btn-lg" onclick="runHGNN()">
+                    <i class="fas fa-play me-2"></i><span data-i18n="btn_train">Train</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="col-lg-8">
+        <div id="hgnnResults" style="display:none"></div>
+        <div id="hgnnPlaceholder" class="text-center py-5">
+            <i class="fas fa-brain fa-4x text-muted mb-3"></i>
+            <h4 class="text-muted" data-i18n="hgnn_placeholder">Configure and train HGNN model</h4>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadDatasetOptions('hgnnDataset');
+    setupDropZone('hgnnDropZone', 'hgnnFileInput');
+});
+
+document.getElementById('hgnnDropZone')?.addEventListener('folderDropped', async e => {
+    const { folderName, files } = e.detail;
+    if (!folderName || files.length === 0) return;
+    await autoUploadAndSelectHGNN(folderName, files);
+});
+
+async function autoUploadAndSelectHGNN(folderName, files) {
+    showLoading(`Uploading folder "${folderName}"...`);
+    const formData = new FormData();
+    formData.append('dataset', folderName);
+    for (const f of files) formData.append('files', f);
+
+    try {
+        const r = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await r.json();
+        hideLoading();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        showToast(`Uploaded ${data.files.length} files to "${folderName}"`, 'success');
+        await loadDatasetOptions('hgnnDataset');
+        setTimeout(() => {
+            document.getElementById('hgnnDataset').value = folderName;
+            loadHGNNFiles();
+        }, 200);
+    } catch(err) { hideLoading(); showToast('Upload error: '+err, 'danger'); }
+}
+
+function loadHGNNFiles() {
+    const dataset = document.getElementById('hgnnDataset').value;
+    if (!dataset) return;
+    fetch(`/api/dataset/${dataset}/files`)
+    .then(r => r.json())
+    .then(data => {
+        // JSON files → attr select
+        const attrSel = document.getElementById('hgnnAttrFile');
+        attrSel.innerHTML = '<option value="">-- Select --</option>';
+        data.files.filter(f => f.type === 'json').forEach(f => {
+            attrSel.innerHTML += `<option value="${f.name}">${f.name}</option>`;
+        });
+        // TXT files → checklist
+        const container = document.getElementById('hgnnFiles');
+        container.innerHTML = '';
+        data.files.filter(f => f.type === 'txt').forEach(f => {
+            container.innerHTML += `
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" value="${f.name}" id="hf_${f.name}">
+                    <label class="form-check-label small" for="hf_${f.name}">${f.name} <span class="text-muted">(${(f.size/1024).toFixed(1)}KB)</span></label>
+                </div>`;
+        });
+    });
+}
+
+function runHGNN() {
+    const dataset = document.getElementById('hgnnDataset').value;
+    const attr_file = document.getElementById('hgnnAttrFile').value;
+    const checked = document.querySelectorAll('#hgnnFiles input:checked');
+    const hyperedge_files = Array.from(checked).map(c => c.value);
+    const epochs = parseInt(document.getElementById('hgnnEpochs').value) || 200;
+    const hidden_dim = parseInt(document.getElementById('hgnnHidden').value) || 128;
+    const num_runs = parseInt(document.getElementById('hgnnRuns').value) || 3;
+    const num_train = parseInt(document.getElementById('hgnnTrain').value) || 300;
+    const num_test = parseInt(document.getElementById('hgnnTest').value) || 100;
+
+    if (!dataset || !attr_file || hyperedge_files.length < 1) {
+        showToast('Select dataset, attribute file, and hyperedge files', 'warning');
+        return;
+    }
+
+    showLoading('Training HGNN model...');
+    fetch('/api/hgnn/train', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({dataset, attr_file, hyperedge_files, epochs, hidden_dim, num_runs, num_train, num_test})
+    })
+    .then(r => r.json())
+    .then(data => {
+        hideLoading();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        displayHGNNResults(data);
+    })
+    .catch(err => { hideLoading(); showToast('Error: ' + err, 'danger'); });
+}
+
+function displayHGNNResults(data) {
+    document.getElementById('hgnnResults').style.display = 'block';
+    document.getElementById('hgnnPlaceholder').style.display = 'none';
+    const container = document.getElementById('hgnnResults');
+
+    // Config info
+    const cfg = data.config;
+    let html = `
+        <div class="card glass-card mb-4">
+            <div class="card-body">
+                <h5><i class="fas fa-info-circle me-2"></i>Training Configuration</h5>
+                <div class="row small">
+                    <div class="col-4">Train: <strong>${cfg.num_train}</strong> | Test: <strong>${cfg.num_test}</strong></div>
+                    <div class="col-4">Epochs: <strong>${cfg.epochs}</strong> | Hidden: <strong>${cfg.hidden_dim}</strong></div>
+                    <div class="col-4">Classes: <strong>${cfg.num_classes}</strong> | Feature Dim: <strong>${cfg.feature_dim}</strong></div>
+                </div>
+            </div>
+        </div>`;
+
+    // Results table
+    html += `<div class="card glass-card mb-4"><div class="card-body">
+        <h5><i class="fas fa-table me-2"></i>Classification Accuracy</h5>
+        <table class="table table-light-custom table-hover">
+            <thead><tr><th>#</th><th>Experiment</th><th>HyperEdges</th><th>Accuracy</th></tr></thead><tbody>`;
+    let idx = 1;
+    for (const [name, r] of Object.entries(data.experiments)) {
+        const barWidth = Math.min(r.mean_accuracy, 100);
+        html += `<tr>
+            <td>${idx++}</td>
+            <td>${name}</td>
+            <td>${r.num_hyperedges}</td>
+            <td>
+                <div class="d-flex align-items-center">
+                    <div class="progress flex-grow-1 me-2" style="height:8px;background:#e2e8f0">
+                        <div class="progress-bar bg-success" style="width:${barWidth}%"></div>
+                    </div>
+                    <strong>${r.mean_accuracy}%</strong>
+                    <small class="text-muted ms-1">±${r.std_accuracy}%</small>
+                </div>
+            </td>
+        </tr>`;
+    }
+    html += '</tbody></table></div></div>';
+
+    // Accuracy bar chart
+    html += '<div class="card glass-card mb-4"><div class="card-body"><div id="hgnnAccChart" style="height:350px"></div></div></div>';
+
+    // Training loss chart for first experiment
+    html += '<div class="card glass-card"><div class="card-body"><div id="hgnnLossChart" style="height:300px"></div></div></div>';
+
+    container.innerHTML = html;
+
+    // Plot accuracy bar chart
+    const expNames = Object.keys(data.experiments);
+    const accs = expNames.map(n => data.experiments[n].mean_accuracy);
+    const stds = expNames.map(n => data.experiments[n].std_accuracy);
+    Plotly.newPlot('hgnnAccChart', [{
+        type: 'bar', x: expNames, y: accs,
+        error_y: {type:'data', array:stds, visible:true, color:'#666'},
+        marker: {color: expNames.map((n,i) => `hsl(${i*360/expNames.length},65%,55%)`)},
+        text: accs.map(a => a.toFixed(1)+'%'), textposition:'outside',
+        textfont: {color:'#333'}
+    }], {
+        title:{text:'Node Classification Accuracy',font:{color:'#1a1a2e',size:14}},
+        xaxis:{color:'#333',tickangle:-30}, yaxis:{title:'Accuracy (%)',color:'#333',range:[0,110],gridcolor:'#e2e8f0'},
+        paper_bgcolor:'#fff', plot_bgcolor:'#fff', margin:{t:40,b:100,l:50,r:20}
+    }, {responsive:true});
+
+    // Plot training loss
+    const firstExp = data.experiments[expNames[0]];
+    if (firstExp && firstExp.train_losses) {
+        Plotly.newPlot('hgnnLossChart', [{
+            y: firstExp.train_losses, mode:'lines',
+            line:{color:'#ef4444', width:2}, name:'Training Loss'
+        }], {
+            title:{text:`Training Loss (${expNames[0]})`,font:{color:'#1a1a2e',size:13}},
+            xaxis:{title:'Epoch (×5)',color:'#333',gridcolor:'#e2e8f0'},
+            yaxis:{title:'Loss',color:'#333',gridcolor:'#e2e8f0'},
+            paper_bgcolor:'#fff', plot_bgcolor:'#fff', margin:{t:40,b:40,l:50,r:20}
+        }, {responsive:true});
+    }
+}
+</script>
+{% endblock %}

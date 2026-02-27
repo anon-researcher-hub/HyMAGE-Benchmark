@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Influence Maximization — HyperBench{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1><i class="fas fa-network-wired me-2"></i><span data-i18n="nav_im">Influence Maximization</span></h1>
+    <p class="lead" data-i18n="im_page_desc">Run hypergraph diffusion experiments with multiple models and strategies</p>
+</div>
+
+<div class="row g-4">
+    <!-- Config Panel -->
+    <div class="col-lg-4">
+        <div class="card glass-card sticky-top" style="top:80px">
+            <div class="card-body">
+                <h5><i class="fas fa-cog me-2"></i><span data-i18n="configuration">Configuration</span></h5>
+
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="select_dataset">Select Dataset</label>
+                    <select class="form-select dark-input" id="imDataset" onchange="loadDatasetFiles('imDataset','imFiles','.txt')">
+                        <option value="">-- Select --</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="select_files">Select Hyperedge Files</label>
+                    <div id="imFiles" class="file-checklist"></div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" data-i18n="or_upload">Or Upload</label>
+                    <div class="drop-zone drop-zone-sm" id="imDropZone">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <small data-i18n="drop_folder_files">Drop folder or .txt files</small>
+                        <input type="file" id="imFileInput" multiple accept=".txt,.json" style="display:none">
+                    </div>
+                </div>
+
+                <hr class="border-secondary">
+
+                <!-- Models -->
+                <div class="mb-3">
+                    <label class="form-label">Diffusion Models</label>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="m_IC" value="IC" checked>
+                        <label class="form-check-label" for="m_IC">HIC</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="m_LT" value="LT" checked>
+                        <label class="form-check-label" for="m_LT">HLT</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="m_WC" value="WC" checked>
+                        <label class="form-check-label" for="m_WC">WC</label>
+                    </div>
+                </div>
+
+                <!-- Strategies -->
+                <div class="mb-3">
+                    <label class="form-label">Seed Strategies</label>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="s_Degree" value="Degree" checked>
+                        <label class="form-check-label" for="s_Degree">Degree</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="s_PageRank" value="PageRank" checked>
+                        <label class="form-check-label" for="s_PageRank">PageRank</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" id="s_Random" value="Random" checked>
+                        <label class="form-check-label" for="s_Random">Random</label>
+                    </div>
+                </div>
+
+                <!-- Parameters -->
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">k values</label>
+                        <input type="text" class="form-control dark-input" id="imKValues" value="1,5,10,20" placeholder="1,5,10,20">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">MC Rounds</label>
+                        <input type="number" class="form-control dark-input" id="imMC" value="30" min="5" max="500">
+                    </div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">IC Prob (0=auto)</label>
+                        <input type="number" class="form-control dark-input" id="imICProb" value="0" step="0.01" min="0" max="1">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">LT θ_max</label>
+                        <input type="number" class="form-control dark-input" id="imLTTheta" value="0.14" step="0.01" min="0.01" max="1">
+                    </div>
+                </div>
+
+                <button class="btn btn-primary w-100 btn-lg" onclick="runIM()">
+                    <i class="fas fa-play me-2"></i><span data-i18n="btn_run">Run Experiment</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="col-lg-8">
+        <div id="imResults" style="display:none"></div>
+        <div id="imPlaceholder" class="text-center py-5">
+            <i class="fas fa-network-wired fa-4x text-muted mb-3"></i>
+            <h4 class="text-muted" data-i18n="im_placeholder">Configure and run IM experiment</h4>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadDatasetOptions('imDataset');
+    setupDropZone('imDropZone', 'imFileInput');
+});
+
+document.getElementById('imDropZone')?.addEventListener('folderDropped', async e => {
+    const { folderName, files } = e.detail;
+    if (!folderName || files.length === 0) return;
+    await autoUploadAndSelect(folderName, files, 'imDataset', 'imFiles', '.txt');
+});
+
+function runIM() {
+    const dataset = document.getElementById('imDataset').value;
+    const checked = document.querySelectorAll('#imFiles input:checked');
+    const files = Array.from(checked).map(c => c.value);
+    const models = ['IC','LT','WC'].filter(m => document.getElementById('m_'+m)?.checked);
+    const strategies = ['Degree','PageRank','Random'].filter(s => document.getElementById('s_'+s)?.checked);
+    const k_values = document.getElementById('imKValues').value.split(',').map(Number).filter(n => n > 0);
+    const mc = parseInt(document.getElementById('imMC').value) || 30;
+    const ic_prob = parseFloat(document.getElementById('imICProb').value) || 0;
+    const lt_theta = parseFloat(document.getElementById('imLTTheta').value) || 0.14;
+
+    if (!dataset || files.length < 1) {
+        showToast('Select dataset and files', 'warning'); return;
+    }
+
+    showLoading('Running IM experiment...');
+    fetch('/api/im/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({dataset, files, models, strategies, k_values, mc, ic_prob, lt_theta})
+    })
+    .then(r => r.json())
+    .then(data => {
+        hideLoading();
+        if (data.error) { showToast(data.error, 'danger'); return; }
+        displayIMResults(data);
+    })
+    .catch(err => { hideLoading(); showToast('Error: ' + err, 'danger'); });
+}
+
+function displayIMResults(data) {
+    document.getElementById('imResults').style.display = 'block';
+    document.getElementById('imPlaceholder').style.display = 'none';
+    const container = document.getElementById('imResults');
+    container.innerHTML = '';
+
+    const colors = {Random:'#3b82f6', Degree:'#22c55e', PageRank:'#f59e0b'};
+    const modelNames = {IC:'Hypergraph IC', LT:'Hypergraph LT', WC:'Weighted Cascade'};
+
+    for (const [fname, fdata] of Object.entries(data.results)) {
+        const summary = fdata.summary;
+        container.innerHTML += `
+            <div class="card glass-card mb-4">
+                <div class="card-body">
+                    <h5><i class="fas fa-file-alt me-2"></i>${fname}</h5>
+                    <small class="text-muted">Nodes: ${summary.nodes} | Edges: ${summary.edges} | Avg Edge Size: ${summary.avg_edge_size}</small>
+                    <div class="row g-3 mt-2" id="imPlots_${fname.replace(/[^a-zA-Z0-9]/g,'_')}"></div>
+                </div>
+            </div>`;
+
+        const plotContainer = document.getElementById('imPlots_' + fname.replace(/[^a-zA-Z0-9]/g,'_'));
+        if (!plotContainer) continue;
+
+        for (const mk of fdata.models) {
+            if (!fdata.results[mk]) continue;
+            const plotId = `plot_${fname.replace(/[^a-zA-Z0-9]/g,'_')}_${mk}`;
+            const col = document.createElement('div');
+            col.className = 'col-md-4';
+            col.innerHTML = `<div id="${plotId}" style="height:320px"></div>`;
+            plotContainer.appendChild(col);
+
+            const traces = [];
+            for (const sn of fdata.strategies) {
+                if (!fdata.results[mk][sn]) continue;
+                const kv = Object.keys(fdata.results[mk][sn]).map(Number).sort((a,b)=>a-b);
+                traces.push({
+                    x: kv,
+                    y: kv.map(k => fdata.results[mk][sn][k]),
+                    mode: 'lines+markers',
+                    name: sn,
+                    marker: {color: colors[sn] || '#666'},
+                    line: {color: colors[sn] || '#666'}
+                });
+            }
+            Plotly.newPlot(plotId, traces, {
+                title: {text: modelNames[mk] || mk, font:{color:'#1a1a2e',size:13}},
+                xaxis: {title:'Seed Size (k)', color:'#333', gridcolor:'#e2e8f0'},
+                yaxis: {title:'Influence Spread', color:'#333', gridcolor:'#e2e8f0'},
+                paper_bgcolor:'#fff', plot_bgcolor:'#fff',
+                legend:{font:{color:'#333'}}, margin:{t:40,b:40,l:50,r:20}
+            }, {responsive:true});
+        }
+    }
+}
+</script>
+{% endblock %}
