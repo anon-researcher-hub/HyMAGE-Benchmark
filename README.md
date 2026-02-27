@@ -130,12 +130,6 @@ You can drag and drop individual files **or entire dataset folders** (e.g., simi
 
 ---
 
-## 📝 License
-
-This project is part of the HyperLLM research initiative.
-
----
-
 ## 🙏 Acknowledgements
 
 - HGNN model based on Feng et al., "Hypergraph Neural Networks" (AAAI 2019)
